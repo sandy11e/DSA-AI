@@ -441,161 +441,102 @@ def analyze_full_profile(github_username: str, leetcode_username: str):
 
 
 
+import json
+
 @app.post("/chat")
 def chat_with_ai(payload: dict):
 
     user_question = payload.get("question")
-    profile_data = payload.get("profile")
+    profile_data = payload.get("profile")  # optional now
 
-    if not user_question or not profile_data:
-        return {"error": "Missing data"}
-
-    # Extract usernames from previously analyzed profile if available
-    github_username = profile_data.get("github_username")
-    leetcode_username = profile_data.get("leetcode_username")
-
-    # If usernames not passed inside profile, return error
-    if not github_username or not leetcode_username:
-        return {"error": "Usernames missing in profile data"}
+    if not user_question:
+        return {"error": "Missing question"}
 
     # -------------------------
-    # FETCH FULL GITHUB DATA
+    # MODE DETECTION
     # -------------------------
 
-    github_url = f"https://api.github.com/users/{github_username}/repos"
-    github_response = requests.get(github_url, headers=headers)
+    use_profile = False
 
-    if github_response.status_code != 200:
-        return {"error": "GitHub fetch failed"}
+    trigger_keywords = [
+        "profile", "analysis", "improve", "roadmap",
+        "dsa", "github", "placement", "strength",
+        "weakness", "score","strongest area","focus on first","DSA skills","30-day study plan"
+    ]
 
-    repos = github_response.json()
-
-    repo_details = []
-    languages = {}
-    total_commits = 0
-
-    for repo in repos:
-        repo_name = repo["name"]
-
-        # Language count
-        lang = repo["language"]
-        if lang:
-            languages[lang] = languages.get(lang, 0) + 1
-
-        # Commit count
-        commits_url = f"https://api.github.com/repos/{github_username}/{repo_name}/commits?per_page=1"
-        commit_response = requests.get(commits_url, headers=headers)
-
-        repo_commit_count = 0
-        if commit_response.status_code == 200:
-            if "Link" in commit_response.headers:
-                link_header = commit_response.headers["Link"]
-                if 'rel="last"' in link_header:
-                    last_page = link_header.split('page=')[-1].split('>')[0]
-                    repo_commit_count = int(last_page)
-                else:
-                    repo_commit_count = 1
-            else:
-                repo_commit_count = len(commit_response.json())
-
-        total_commits += repo_commit_count
-
-        repo_details.append({
-            "name": repo_name,
-            "stars": repo["stargazers_count"],
-            "forks": repo["forks_count"],
-            "language": lang,
-            "commit_count": repo_commit_count
-        })
+    for word in trigger_keywords:
+        if word in user_question.lower():
+            use_profile = True
+            break
 
     # -------------------------
-    # FETCH FULL LEETCODE DATA
+    # GENERAL MODE (FAST)
     # -------------------------
 
-    lc_url = "https://leetcode.com/graphql"
+    if not use_profile or not profile_data:
 
-    query = """
-    query getUserProfile($username: String!) {
-      matchedUser(username: $username) {
-        submitStats {
-          acSubmissionNum {
-            difficulty
-            count
-          }
+        prompt = f"""
+You are a helpful AI coding mentor.
+
+Have natural conversation.
+Answer clearly and concisely.
+give only short and precise response.
+
+User: {user_question}
+"""
+
+    # -------------------------
+    # PROFILE MODE (SMART)
+    # -------------------------
+
+    else:
+
+        compact_profile = {
+            "github_score": profile_data.get("github_score"),
+            "dsa_score": profile_data.get("dsa_score"),
+            "overall_score": profile_data.get("overall_score"),
+            "placement_readiness": profile_data.get("placement_readiness"),
+            "strengths": profile_data.get("strengths"),
+            "weaknesses": profile_data.get("weaknesses"),
+            "roadmap": profile_data.get("roadmap")
         }
-      }
-    }
-    """
 
-    lc_response = requests.post(
-        lc_url,
-        json={"query": query, "variables": {"username": leetcode_username}}
-    )
+        profile_json = json.dumps(compact_profile, indent=2)
 
-    if lc_response.status_code != 200:
-        return {"error": "LeetCode fetch failed"}
-
-    lc_data = lc_response.json()
-    user = lc_data.get("data", {}).get("matchedUser")
-
-    if not user:
-        return {"error": "LeetCode user not found"}
-
-    stats = user["submitStats"]["acSubmissionNum"]
-
-    lc_breakdown = {}
-    for item in stats:
-        lc_breakdown[item["difficulty"]] = item["count"]
-
-    # -------------------------
-    # BUILD STRUCTURED PROFILE
-    # -------------------------
-
-    full_profile = {
-        "analyzed_scores": profile_data,
-        "github": {
-            "total_repositories": len(repos),
-            "total_commits": total_commits,
-            "languages_used": languages,
-            "repositories": repo_details
-        },
-        "leetcode": {
-            "difficulty_breakdown": lc_breakdown
-        }
-    }
-
-    profile_json = json.dumps(full_profile, indent=2)
-
-    system_prompt = f"""
+        prompt = f"""
 You are a senior AI coding mentor.
+give only short response.
 
-Below is the COMPLETE coding profile data:
+Here is the user's coding profile:
 
 {profile_json}
 
-Perform deep analysis:
-- DSA depth
-- Hard problem exposure
-- Real-world project strength
-- Commit consistency
-- Technology diversity
-- Hiring readiness
+Give structured, analytical advice.
 
-Give structured, analytical, actionable advice.
-Do not just repeat numbers.
-Think critically.
 
-Now answer the user's question.
+User question: {user_question}
 """
 
+    # -------------------------
+    # LLM CALL
+    # -------------------------
+
     response = requests.post(
-        "http://localhost:11434/api/generate",
-        json={
-            "model": "llama3",
-            "prompt": system_prompt + "\nUser Question: " + user_question,
-            "stream": False
+    "http://localhost:11434/api/generate",
+    json={
+        "model": "phi3:mini",
+        "prompt": prompt,
+        "stream": False,
+        "options": {
+            "temperature": 0.3,
+            "num_predict": 500,
+            "top_k": 40,
+            "top_p": 0.9,
+            "num_ctx": 2048
         }
-    )
+    }
+)
+
 
     if response.status_code != 200:
         return {"error": "Ollama not responding"}
@@ -603,28 +544,6 @@ Now answer the user's question.
     result = response.json()
 
     return {"reply": result.get("response", "No response")}
-
-@app.post("/register")
-def register(user: dict):
-    password = user.get("password")
-
-    if not password or len(password) > 72:
-        return {"error": "Password must be less than 72 characters"}
-
-    existing_user = users_collection.find_one({"email": user["email"]})
-
-    if existing_user:
-        return {"error": "User already exists"}
-
-    hashed_password = pwd_context.hash(password)
-
-    users_collection.insert_one({
-        "email": user["email"],
-        "password": hashed_password,
-        "created_at": datetime.utcnow()
-    })
-
-    return {"message": "User registered successfully"}
 
 @app.post("/login")
 def login(user: dict):
