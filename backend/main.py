@@ -476,7 +476,7 @@ def chat_with_ai(payload: dict):
     if not use_profile or not profile_data:
 
         prompt = f"""
-You are a helpful AI coding mentor.
+You are a helpful AI mentor.
 
 Have natural conversation.
 Answer clearly and concisely.
@@ -504,7 +504,7 @@ User: {user_question}
         profile_json = json.dumps(compact_profile, indent=2)
 
         prompt = f"""
-You are a senior AI coding mentor.
+You are a senior AI mentor.
 give only short response.
 
 Here is the user's coding profile:
