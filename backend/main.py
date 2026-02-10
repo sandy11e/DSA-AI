@@ -545,15 +545,21 @@ User question: {user_question}
 
     return {"reply": result.get("response", "No response")}
 
+from fastapi import HTTPException
+
 @app.post("/login")
 def login(user: dict):
-    db_user = users_collection.find_one({"email": user["email"]})
+
+    email = user.get("email")
+    password = user.get("password")
+
+    db_user = users_collection.find_one({"email": email})
 
     if not db_user:
-        return {"error": "Invalid credentials"}
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    if not pwd_context.verify(user["password"], db_user["password"]):
-        return {"error": "Invalid credentials"}
+    if not pwd_context.verify(password, db_user["password"]):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
 
@@ -563,4 +569,31 @@ def login(user: dict):
         algorithm=ALGORITHM
     )
 
-    return {"access_token": token}
+    return {
+        "access_token": token,
+        "token_type": "bearer"
+    }
+
+@app.post("/register")
+def register(user: dict):
+
+    email = user.get("email")
+    password = user.get("password")
+
+    if not email or not password:
+        return {"error": "Email and password required"}
+
+    existing_user = users_collection.find_one({"email": email})
+
+    if existing_user:
+        return {"error": "User already exists"}
+
+    hashed_password = pwd_context.hash(password)
+
+    users_collection.insert_one({
+        "email": email,
+        "password": hashed_password,
+        "created_at": datetime.utcnow()
+    })
+
+    return {"message": "User registered successfully"}
